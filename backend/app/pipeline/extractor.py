@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import csv
 import io
 from typing import Dict, List, Tuple
-
-import pandas as pd
 from docx import Document
 from PIL import Image
 from pypdf import PdfReader
 from pptx import Presentation
+from openpyxl import load_workbook
 
 from app.core.config import Settings
 from app.pipeline.ocr_azure import azure_read_document
@@ -48,13 +48,18 @@ def _extract_pptx(data: bytes) -> str:
 
 
 def _extract_csv(data: bytes) -> str:
-    df = pd.read_csv(io.BytesIO(data))
-    return df.to_csv(index=False)
+    decoded = data.decode("utf-8", errors="ignore")
+    return decoded
 
 
 def _extract_xlsx(data: bytes) -> str:
-    df = pd.read_excel(io.BytesIO(data))
-    return df.to_csv(index=False)
+    workbook = load_workbook(io.BytesIO(data), data_only=True)
+    sheet = workbook.active
+    output = io.StringIO()
+    writer = csv.writer(output)
+    for row in sheet.iter_rows(values_only=True):
+        writer.writerow([cell if cell is not None else "" for cell in row])
+    return output.getvalue()
 
 
 def _extract_image(data: bytes) -> None:

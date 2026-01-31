@@ -16,7 +16,7 @@ export default function Stepper({ status, stage }: StepperProps) {
         return (
           <div key={step} className="flex items-center gap-2 text-xs uppercase tracking-[0.2em]">
             <div
-              className={`h-3 w-3 border border-hairline ${isDone ? "bg-white" : "bg-transparent"} ${
+              className={`h-3 w-3 border border-hairline ${isDone ? "bg-black" : "bg-transparent"} ${
                 isActive ? "animate-pulse" : ""
               }`}
               aria-hidden

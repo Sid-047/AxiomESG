@@ -20,7 +20,11 @@ class AzureOpenAIClient:
         if not self.settings.azure_openai_deployment:
             raise ValueError("AZURE_OPENAI_DEPLOYMENT is not configured.")
         endpoint = self.settings.azure_openai_endpoint.rstrip("/")
-        url = f"{endpoint}/openai/deployments/{self.settings.azure_openai_deployment}/chat/completions"
+        if "/openai" in endpoint:
+            base = endpoint
+        else:
+            base = f"{endpoint}/openai"
+        url = f"{base}/deployments/{self.settings.azure_openai_deployment}/chat/completions"
         params = {"api-version": self.settings.azure_openai_api_version}
         headers = {"api-key": self.settings.azure_openai_api_key, "Content-Type": "application/json"}
         payload: Dict[str, Any] = {
