@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import PlainTextResponse
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.api.job_store import JobRecord, get_job_store
 from app.pipeline.orchestrator import run_pipeline
+from app.pipeline.strategies import list_strategies
+from app.pipeline.report import generate_report
 
 
 router = APIRouter()
@@ -34,10 +37,20 @@ async def health() -> Dict[str, str]:
     return {"status": "ok", "service": "AxiomESG"}
 
 
+@router.get("/api/algorithms")
+async def algorithms() -> List[Dict[str, str]]:
+    """Return the list of available weighting algorithms."""
+    return list_strategies()
+
+
 @router.post("/api/extract")
-async def extract(files: List[UploadFile] = File(...)) -> Dict[str, Any]:
+async def extract(
+    files: List[UploadFile] = File(...),
+    algorithm: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
     settings = get_settings()
     store = get_job_store()
+    algo = algorithm or settings.default_algorithm
 
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
@@ -62,6 +75,7 @@ async def extract(files: List[UploadFile] = File(...)) -> Dict[str, Any]:
         stage="UPLOAD",
         progress=5,
         source_files=[b[0] for b in buffers],
+        algorithm=algo,
     )
     await _store_set(store, record)
 
@@ -77,7 +91,9 @@ async def extract(files: List[UploadFile] = File(...)) -> Dict[str, Any]:
                 record.progress = progress
                 asyncio.create_task(_store_set(store, record))
 
-            output, raw_text, usage = run_pipeline(buffers, settings, job_id, stage_update)
+            output, raw_text, usage = run_pipeline(
+                buffers, settings, job_id, stage_update, algorithm=algo
+            )
 
             record.stage = "OUTPUT"
             record.progress = 100
@@ -99,8 +115,13 @@ async def extract(files: List[UploadFile] = File(...)) -> Dict[str, Any]:
 
 
 @router.post("/api/extract_sync")
-async def extract_sync(files: List[UploadFile] = File(...)) -> Dict[str, Any]:
+async def extract_sync(
+    files: List[UploadFile] = File(...),
+    algorithm: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
     settings = get_settings()
+    algo = algorithm or settings.default_algorithm
+
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
 
@@ -118,7 +139,9 @@ async def extract_sync(files: List[UploadFile] = File(...)) -> Dict[str, Any]:
         raise HTTPException(status_code=413, detail="Total upload exceeds max size.")
 
     job_id = str(uuid.uuid4())
-    output, raw_text, usage = run_pipeline(buffers, settings, job_id)
+    output, raw_text, usage = run_pipeline(
+        buffers, settings, job_id, algorithm=algo
+    )
     return {
         "job_id": job_id,
         "status": "done",
@@ -139,3 +162,16 @@ async def job_status(job_id: str) -> Dict[str, Any]:
     if not record:
         raise HTTPException(status_code=404, detail="Job not found.")
     return record.to_dict()
+
+
+@router.get("/api/jobs/{job_id}/report")
+async def job_report(job_id: str) -> PlainTextResponse:
+    """Generate and return a Markdown report for a completed job."""
+    store = get_job_store()
+    record = await _store_get(store, job_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if record.status != "done" or not record.result:
+        raise HTTPException(status_code=400, detail="Job not complete or has no result.")
+    report_md = generate_report(record.result)
+    return PlainTextResponse(content=report_md, media_type="text/markdown")

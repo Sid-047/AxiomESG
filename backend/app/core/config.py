@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     esg_keywords_soc: str = Field(default="", alias="ESG_KEYWORDS_S")
     esg_keywords_gov: str = Field(default="", alias="ESG_KEYWORDS_G")
 
+    default_algorithm: str = Field(default="heuristic", alias="DEFAULT_ALGORITHM")
+
     class Config:
         env_file = ".env"
         case_sensitive = False

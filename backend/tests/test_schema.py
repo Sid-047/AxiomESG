@@ -9,6 +9,7 @@ def test_schema_validation():
             "model_provider": "openrouter",
             "model_name": "test",
             "awfa_weights_preserved": True,
+            "algorithm_used": "heuristic",
         },
         "aggregation": {
             "total_documents": 1,
@@ -47,3 +48,28 @@ def test_schema_validation():
     }
     model = ESGOutput.model_validate(payload)
     assert model.aggregation.total_documents == 1
+    assert model.metadata.algorithm_used == "heuristic"
+
+
+def test_schema_algorithm_used():
+    """Ensure algorithm_used defaults to heuristic when omitted."""
+    payload = {
+        "metadata": {
+            "source_files": [],
+            "extraction_date": "2025-01-01T00:00:00Z",
+            "model_provider": "test",
+            "model_name": "test",
+            "awfa_weights_preserved": True,
+        },
+        "aggregation": {
+            "total_documents": 0,
+            "total_esg_sentences": 0,
+            "total_weighted_blocks": 0,
+            "ocr_used": False,
+        },
+        "environmental": {"narrative": "N/A", "metrics": [], "confidence_score": 0.0, "top_evidence": []},
+        "social": {"narrative": "N/A", "metrics": [], "confidence_score": 0.0, "top_evidence": []},
+        "governance": {"narrative": "N/A", "metrics": [], "confidence_score": 0.0, "top_evidence": []},
+    }
+    model = ESGOutput.model_validate(payload)
+    assert model.metadata.algorithm_used == "heuristic"

@@ -21,6 +21,7 @@ class JobRecord:
     progress: int = 0
     source_files: list[str] = field(default_factory=list)
     raw_text_preview: str = ""
+    algorithm: str = "heuristic"
     result: Optional[Dict[str, Any]] = None
     error: Optional[Dict[str, Any]] = None
     updated_at: float = field(default_factory=lambda: time.time())

@@ -1,212 +1,184 @@
-# AxiomESG
+# AxiomESG: Deterministic ESG Intelligence
 
-AxiomESG is a deterministic intelligence layer that ingests unstructured documents (PDF/DOCX/XLSX/CSV/PPTX/images), extracts ESG-relevant evidence, converts it to a canonical ESG JSON, validates it, and returns the final payload for downstream systems.
+**AxiomESG** is an advanced, deterministic intelligence layer designed to autonomously ingest unstructured corporate documents (PDFs, DOCX, XLSX, PPTX, Images) and distill them into highly structured, canonical ESG (Environmental, Social, Governance) data. 
 
-This repository contains:
-- `backend/` — FastAPI service with a hardened, modular pipeline
-- `frontend/` — Next.js App Router UI for ingestion, preview, and JSON output
-- `OldFiles_esg-ai-pipeline/` — legacy pipeline retained for reference
+Unlike raw LLM wrappers that suffer from hallucinations, undefined schemas, and token limit crashes, AxiomESG employs a multi-stage **Pipeline Architecture** with an embedded **Algorithm Strategy Registry** (featuring Heuristic AWFA and BERT-based semantic fusion) to pre-process, filter, and weight evidence *before* a final, constrained LLM extraction pass generates strict Pydantic-validated JSON and human-readable Markdown reports.
 
-## Business Use Cases
+---
 
-- **ESG reporting automation**: accelerate annual/quarterly ESG report prep by turning unstructured documents into structured ESG data.
-- **Portfolio diligence**: standardize ESG evidence extraction across target companies during due diligence.
-- **Regulatory readiness**: build audit trails by keeping evidence spans aligned to output metrics.
-- **Supplier ESG monitoring**: extract ESG claims and metrics from supplier disclosures and scorecards.
-- **Sustainability data platforms**: feed structured ESG JSON into data lakes or analytics tools.
+## 🎯 Business Use Cases
 
-## System Overview
+- **Automated ESG Reporting**: Accelerate the preparation of annual/quarterly ESG reports by transforming thousands of pages of unstructured disclosures into actionable structured metrics.
+- **Portfolio Due Diligence**: Standardize the extraction of ESG evidence across target companies to build a level playing field for comparisons.
+- **Supplier ESG Monitoring**: Parse supplier audits, scorecards, and questionnaires to extract verified claims and flag labor/environmental risks.
+- **Regulatory Readiness & Audit Trails**: Every metric extracted is tethered directly to the exact source file and text span, satisfying CSRD and TCFD transparency requirements.
 
-AxiomESG runs a deterministic, stage-driven pipeline:
+---
 
-1) **UPLOAD** — document intake and size validation  
-2) **EXTRACT** — text extraction (OCR optional)  
-3) **FILTER** — ESG sentence filtering (E/S/G keywords)  
-4) **WEIGHT** — AWFA weighting + deterministic dedup  
-5) **INTELLIGENCE** — single LLM call to standardize ESG JSON  
-6) **VALIDATE** — Pydantic v2 schema validation  
-7) **OUTPUT** — return strict JSON and preview text
+## 🧠 The Intelligence Pipeline
 
-### Data Flow
+AxiomESG runs a deterministic, deeply observable 7-stage pipeline:
 
-Documents → Text Extraction → ESG Sentence Filter → AWFA → Evidence Spans → LLM → Pydantic → ESG JSON
+1. **UPLOAD (`INTAKE`)**
+   Takes in raw documents (Multipart upload). Enforces file size limits (25MB per file, 50MB total).
+2. **EXTRACT (`MULTI-FORMAT PARSING`)**
+   Converts PDFs, DOCX, CSV/XLSX, and PPTX into normalized text. Optionally falls back to **Azure Document Intelligence** for OCR on images and scanned PDFs with exponential backoff.
+3. **FILTER (`SIGNAL SEPARATION`)**
+   Splits text into sentences and applies hyper-optimized keyword dictionaries to classify sentences into E, S, or G buckets.
+4. **WEIGHT (`ALGORITHMIC STRATEGY`)**
+   Evaluates the filtered sentences using a selectable strategy (Heuristic AWFA, BERT Fusion, etc.), assigns a relevance weight (0.0 to 1.0), sorts them, and deterministically deduplicates similar semantic blocks.
+5. **INTELLIGENCE (`CONSTRICTED LLM EXTRACTION`)**
+   Passes only the highest-weighted evidence spans into a selected LLM (Azure OpenAI, Gemini, or OpenRouter). The LLM is strictly constrained via its system prompt to output pure schema-compliant JSON, without fabricating metrics or normalizing units. 
+6. **VALIDATE (`SCHEMA ENFORCEMENT`)**
+   Validates the LLM output against a strict `Pydantic v2` schema tree. If validation fails, an automatic single-pass "repair" prompt is triggered internally to fix the JSON casing/keys.
+7. **OUTPUT (`FINAL MANIFEST`)**
+   Returns the canonical ESG JSON, detailed processing metadata, aggregation stats, and raw text preview strings back to the client.
 
-### Output Contract (Canonical JSON)
+---
 
-The output strictly conforms to `ESGOutput`:
-- `metadata` — source files, model info, ISO8601 timestamp, AWFA flag
-- `aggregation` — counts, OCR usage, totals
-- `environmental/social/governance` sections — narrative, metrics, confidence score, top evidence spans
+## 🧬 Algorithm Strategy Layer
 
-This enables downstream systems to rely on stable, predictable structure.
+A core mechanic of AxiomESG is its extensible **Strategy Registry** (`app/pipeline/strategies.py`). The frontend UI provides a toggle to dispatch jobs using one of several distinct weighting algorithms:
 
-## Technical Aspects
+- **`Heuristic AWFA` (Default)**
+  An enhanced execution of the **Axiom Weighting & Filtering Algorithm**. It scores blocks purely based on deterministic factors: Keyword Density, Normalized Sentence Length, Numerical Density (presence of %, $, dates, digits), and Category specific weights. Ultra-fast and uses no GPU memory.
+  
+- **`BERT + Mean Fusion`**
+  A hybrid approach. The system lazy-loads a fine-tuned HuggingFace `FinBERT` ESG sequence-classifier to generate probability distributions for E/S/G classifications. It then statically fuses the BERT probability tensors with the base Heuristic AWFA score using a balanced 50/50 mean fusion strategy. Great for heavily nuanced, dense prose.
 
-### Backend (FastAPI)
+- **`BERT + Static Fusion`**
+  Applies a harder static multiplier. Heavily penalizes text that AWFA thinks is relevant but the BERT neural network classifies with low ESG probability. 
 
-- **Python 3.11+**
-- **FastAPI** with async endpoints
-- **Pydantic v2** schema validation
-- **Uvicorn** with reload for dev
-- **In-memory job store** (optional Redis if `REDIS_URL` is set)
-- **No document persistence** by default (in-memory processing)
+- **`BERT + AWFA v1 & v2`**
+  Legacy algorithmic permutations retained for analytical continuity and backwards-compatible testing.
 
-### Pipeline Modules
+---
 
-- `extractor.py` — multi-format extraction
-  - PDF (pypdf), DOCX (python-docx), PPTX (python-pptx)
-  - CSV (utf-8 text), XLSX (openpyxl to CSV)
-  - Images via OCR if configured
-- `ocr_azure.py` — Azure Document Intelligence (prebuilt-read), retried with backoff
-- `esg_filter.py` — configurable keyword lists for E/S/G
-- `awfa.py` — deterministic weighting + dedup
-- `llm/` — provider adapters (OpenRouter, Azure OpenAI, Gemini)
-- `schema.py` — canonical ESG output model
-- `orchestrator.py` — pipeline coordination + logging
+## 🏗 System Architecture
 
-### LLM Provider Adapters
+The repository is modularly decoupled into two main environments:
 
-Controlled by `LLM_PROVIDER`:
-- `openrouter` — OpenAI-compatible
-- `azure_openai` — OpenAI-compatible with Azure deployment
-- `gemini` — Google GenAI REST
+### 1. The Backend (`FastAPI`)
+- **Core Engine**: Python 3.11-slim, robust async endpoints (`uvicorn`).
+- **Pydantic v2**: Handles `ESGOutput`, `ESGSection`, `Metric`, and `EvidenceSpan` validation.
+- **In-Memory Job Store**: Background tasks allow for asynchronous polling, providing a fast ingestion UI even for massive 100-page PDFs. (Redis integration available).
+- **Report Generator**: (`app/pipeline/report.py`) Dynamically translates the 3-dimensional ESG JSON graph into a clean, executive-ready Markdown Report.
 
-Each adapter:
-- enforces strict JSON output
-- retries once on transient errors
-- returns usage where available
+### 2. The Frontend (`Next.js 14 App Router`)
+- **React / TypeScript / TailwindCSS**
+- **Brand UI/UX**: AxiomESG uses a strict, hyper-minimalist monochrome design system. White backgrounds, 1px black hairlines, pure semantic HTML layout grids, and stark typographic hierarchy. No rounded corners. No gradients.
+- **Key Components**:
+  - `AlgorithmSelector`: Real-time strategy switching UI.
+  - `Stepper`: Real-time WebSocket-like (via async polling) progress indicators for the 7-stage engine.
+  - `ReportPane`: A tabbed toggle bridging the raw JSON Tree view and the generated Executive Markdown Report view.
 
-### Prompt Hardening
+---
 
-- extracted text treated as data only
-- explicit instruction to ignore embedded document prompts
-- strict JSON output (no markdown)
-- one repair pass if JSON invalid
+## 🐳 Docker & The `start.sh` Launcher
 
-### Observability
+The entire ecosystem is containerized for instant, consistent deployment across any environment. We provide a single-shot entrypoint script.
 
-- job ID is included in logs
-- stage timing is logged (extract/filter/weight/LLM/validate)
-- token usage logged where provided
-- secrets never logged
+### Launching the Stack
 
-## UX & UI Notes
-
-The UI is monochrome, sharp, and minimal:
-- **White-first** layout with black hairlines and accents
-- 12-column grid, large whitespace
-- No pills or rounded elements
-- Calm 300ms ease-out transitions
-- Accessibility: focus outlines and ARIA labels
-
-## Run (Local Dev)
-
-### Docker
+To build the images and boot the system in the background, simply run:
 ```bash
-docker compose up
+./start.sh
 ```
 
-### Manual
+### The `start.sh` CLI Interface
+
+If you need precise control, the script operates as a robust CLI:
 ```bash
-make backend
-make frontend
+./start.sh up          # Build & start all services (detached)
+./start.sh up:dev      # Build & start in foreground (with hot-reloading logs)
+./start.sh down        # Stop & remove all containers
+./start.sh restart     # Restart all services
+./start.sh logs        # Tail logs from all services
+./start.sh logs:back   # Tail logs exclusively from the FastAPI backend
+./start.sh logs:front  # Tail logs exclusively from the Next.js frontend
+./start.sh status      # Show container status
+./start.sh shell:back  # Open an interactive /bin/bash shell in the backend
+./start.sh test        # Run the backend pytest validation suite
+./start.sh health      # Ping backend health endpoints
+./start.sh algorithms  # List available ESG algorithms directly from the API
+./start.sh clean       # Nuke containers, images & volumes
 ```
 
-Backend runs on `http://localhost:8000`, frontend on `http://localhost:3000`.
+---
 
-## Environment Setup
+## ⚙️ Environment Construction
 
-- `backend/.env.example` → copy to `backend/.env`
-- `frontend/.env.example` → copy to `frontend/.env.local`
+When evaluating `start.sh` for the first time, it will autonomously generate a placeholder `backend/.env` file if one does not exist. 
 
-Only placeholders are provided. Do not commit real secrets.
+### Required Variables
+Choose one LLM reasoning engine to attach to the pipeline:
 
-### Required (choose one LLM provider)
-
-**Azure OpenAI (recommended):**
-```
+**Azure OpenAI (Recommended for Speed):**
+```env
 LLM_PROVIDER=azure_openai
 AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
-AZURE_OPENAI_API_KEY=...
-AZURE_OPENAI_DEPLOYMENT=...
+AZURE_OPENAI_API_KEY=your_key
+AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini
 AZURE_OPENAI_API_VERSION=2024-02-15-preview
 ```
 
 **OpenRouter:**
-```
+```env
 LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=...
-OPENROUTER_MODEL=openrouter/auto
+OPENROUTER_API_KEY=your_key
+OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
 ```
 
-**Gemini:**
-```
-LLM_PROVIDER=gemini
-GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-1.5-flash
-```
-
-### Optional OCR
-
-```
-AZURE_DOCINTEL_ENDPOINT=...
-AZURE_DOCINTEL_KEY=...
+**Optional Modules:**
+If parsing image-heavy or scanned PDFs, you should enable Azure Document Intelligence OCR:
+```env
+AZURE_DOCINTEL_ENDPOINT=https://...
+AZURE_DOCINTEL_KEY=your_key
 ```
 
-## API Reference
+---
 
-### GET `/`
-Returns:
-```
-{ "status": "ok", "service": "AxiomESG" }
-```
+## 🔌 API Reference
 
-### POST `/api/extract`
-Multipart upload, returns:
-```
-{ "job_id": "...", "status": "queued" }
-```
+### `GET /`
+Standard Healthcheck ping.
 
-### GET `/api/jobs/{job_id}`
-Returns:
-```
+### `GET /api/algorithms`
+Returns a strict mapping of the Strategy Registry keys and their UI display names.
+```json
 {
-  "job_id": "...",
-  "status": "queued|running|done|error",
-  "stage": "UPLOAD|EXTRACT|FILTER|WEIGHT|INTELLIGENCE|VALIDATE|OUTPUT",
-  "progress": 0-100,
-  "source_files": [...],
-  "raw_text_preview": "first N chars ...",
-  "result": { ESG JSON } | null,
-  "error": { "message": "...", "detail": "..."} | null
+  "heuristic": "Heuristic AWFA",
+  "bert_mean": "BERT + Mean Fusion",
+  ...
 }
 ```
 
-## Reliability & Safety
+### `POST /api/extract` & `POST /api/extract_sync`
+Accepts `multipart/form-data` file uploads. Accepts an optional `algorithm` query parameter. Initiates the pipeline.
 
-- File size limits enforced (per-file + total)
-- OCR retries with exponential backoff
-- LLM retry once on transient errors
-- Strict JSON output + one repair pass
-- No document persistence by default
-- CORS limited to configured origins
-
-## Module Map
-
-```
-backend/
-  app/
-    api/          FastAPI routes + job store
-    core/         settings + logging
-    pipeline/     extract → filter → AWFA → LLM → validate
-  tests/          minimal pytest coverage
-
-frontend/
-  app/            Next.js App Router shell + main screen
-  components/     UI components (dropzone, stepper, preview, JSON)
+### `GET /api/jobs/{job_id}`
+Returns the real-time pipeline status of a specific job ticket.
+```json
+{
+  "job_id": "893c8d-...",
+  "status": "running",
+  "stage": "WEIGHT",
+  "progress": 55,
+  "result": null
+}
 ```
 
-## Notes
+### `GET /api/jobs/{job_id}/report`
+Returns a structured Markdown representation of the completed ESG JSON.
 
-- Legacy pipeline lives in `OldFiles_esg-ai-pipeline/` and remains untouched.
-- Optional OCR uses Azure Document Intelligence when configured.
+---
+
+## 🛡 Reliability & Hardening
+
+- **Memory Constraints**: File limits strictly enforced at the HTTP middleware layer.
+- **Fail-Safes**: Missing internal model weights for BERT automatically downgrade gracefully or halt predictably using custom exceptions.
+- **Transient Recovery**: Network timeouts during LLM API interactions and Azure OCR interactions trigger exponential backoff retry loops.
+- **Idempotency**: The application strictly separates storage state from pipeline processing logic.
+
+---
+*Legacy Note: Previous engine files have been sequestered securely into `OldFiles_esg-ai-pipeline/` for historical archival and pattern analysis. The current `backend/` engine supersedes all legacy operations.*

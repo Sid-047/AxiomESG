@@ -6,6 +6,8 @@ import FileList from "@/components/FileList";
 import Stepper from "@/components/Stepper";
 import PreviewPane from "@/components/PreviewPane";
 import JsonPane from "@/components/JsonPane";
+import ReportPane from "@/components/ReportPane";
+import AlgorithmSelector from "@/components/AlgorithmSelector";
 import Toast from "@/components/Toast";
 
 type JobStatus = {
@@ -33,10 +35,14 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState("COPIED");
+  const [algorithm, setAlgorithm] = useState<string>("heuristic");
+  const [outputTab, setOutputTab] = useState<"json" | "report">("json");
 
   const totalBytes = useMemo(() => files.reduce((sum, f) => sum + f.size, 0), [files]);
 
-  const setToast = useCallback(() => {
+  const showToast = useCallback((msg: string = "COPIED") => {
+    setToastMessage(msg);
     setToastVisible(true);
     setTimeout(() => setToastVisible(false), 1200);
   }, []);
@@ -105,7 +111,8 @@ export default function Home() {
     files.forEach((f) => form.append("files", f));
 
     const endpoint = SYNC_MODE ? "/api/extract_sync" : "/api/extract";
-    const res = await fetch(`${BACKEND_URL}${endpoint}`, { method: "POST", body: form });
+    const url = `${BACKEND_URL}${endpoint}?algorithm=${encodeURIComponent(algorithm)}`;
+    const res = await fetch(url, { method: "POST", body: form });
     if (!res.ok) {
       const message = await res.text();
       setStatus("error");
@@ -120,6 +127,7 @@ export default function Home() {
       setStage(data.stage || "OUTPUT");
       setResult(data.result || null);
       setRawText(data.raw_text_preview || "");
+      setJobId(data.job_id || null);
       return;
     }
 
@@ -127,14 +135,14 @@ export default function Home() {
     setStage("EXTRACT");
     setJobId(data.job_id);
     pollJob(data.job_id);
-  }, [files, pollJob]);
+  }, [files, pollJob, algorithm]);
 
   const copyJson = useCallback(async () => {
     if (!result) return;
     const text = JSON.stringify(result, null, 2);
     try {
       await navigator.clipboard.writeText(text);
-      setToast();
+      showToast("COPIED");
     } catch {
       const area = document.createElement("textarea");
       area.value = text;
@@ -142,15 +150,15 @@ export default function Home() {
       area.select();
       document.execCommand("copy");
       document.body.removeChild(area);
-      setToast();
+      showToast("COPIED");
     }
-  }, [result, setToast]);
+  }, [result, showToast]);
 
   const copyRaw = useCallback(async () => {
     if (!rawText) return;
     try {
       await navigator.clipboard.writeText(rawText);
-      setToast();
+      showToast("COPIED");
     } catch {
       const area = document.createElement("textarea");
       area.value = rawText;
@@ -158,9 +166,9 @@ export default function Home() {
       area.select();
       document.execCommand("copy");
       document.body.removeChild(area);
-      setToast();
+      showToast("COPIED");
     }
-  }, [rawText, setToast]);
+  }, [rawText, showToast]);
 
   useEffect(() => {
     if (!files.length) {
@@ -170,8 +178,11 @@ export default function Home() {
       setRawText("");
       setError(null);
       setDetail(null);
+      setJobId(null);
     }
   }, [files.length]);
+
+  const isProcessing = status === "uploading" || status === "processing";
 
   return (
     <main className="min-h-screen relative scanlines">
@@ -192,7 +203,7 @@ export default function Home() {
         </header>
 
         <div className="border-t border-hairline pt-4">
-          <Stepper status={status} stage={stage} />
+          <Stepper status={status} stage={stage} algorithm={algorithm} />
         </div>
 
         {error ? (
@@ -218,11 +229,18 @@ export default function Home() {
               error={error}
             />
             {files.length ? <FileList files={files} onRemove={removeFile} /> : null}
+
+            <AlgorithmSelector
+              selected={algorithm}
+              onSelect={setAlgorithm}
+              disabled={isProcessing}
+            />
+
             <button
               type="button"
               className="w-full border border-hairline px-4 py-3 text-xs uppercase tracking-[0.3em] focus-ring transition-all"
               onClick={runExtraction}
-              disabled={!files.length || status === "uploading" || status === "processing"}
+              disabled={!files.length || isProcessing}
               aria-label="Run extraction"
             >
               Run Extraction
@@ -235,13 +253,37 @@ export default function Home() {
           </section>
 
           <section className="col-span-4 space-y-6">
-            <div className="text-xs uppercase tracking-[0.3em] font-crest">ESG JSON</div>
-            <JsonPane data={result} onCopy={copyJson} />
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                className={`text-xs uppercase tracking-[0.3em] font-crest transition-all ${
+                  outputTab === "json" ? "" : "text-muted"
+                }`}
+                onClick={() => setOutputTab("json")}
+              >
+                ESG JSON
+              </button>
+              <span className="text-hairline">|</span>
+              <button
+                type="button"
+                className={`text-xs uppercase tracking-[0.3em] font-crest transition-all ${
+                  outputTab === "report" ? "" : "text-muted"
+                }`}
+                onClick={() => setOutputTab("report")}
+              >
+                REPORT
+              </button>
+            </div>
+            {outputTab === "json" ? (
+              <JsonPane data={result} onCopy={copyJson} />
+            ) : (
+              <ReportPane jobId={jobId} ready={status === "done"} />
+            )}
           </section>
         </div>
       </div>
 
-      <Toast message="COPIED" visible={toastVisible} />
+      <Toast message={toastMessage} visible={toastVisible} />
     </main>
   );
 }

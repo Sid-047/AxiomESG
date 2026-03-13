@@ -38,6 +38,7 @@ class ESGOutputMetadata(BaseModel):
     model_provider: str
     model_name: str
     awfa_weights_preserved: bool
+    algorithm_used: str = "heuristic"
 
 
 class ESGAggregation(BaseModel):

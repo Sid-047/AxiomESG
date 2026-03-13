@@ -18,3 +18,10 @@
 /dist/
 /build/
 .DS_Store
+
+# Large model weights
+*.safetensors
+*.bin
+
+# Generated testing PDFs
+*.pdf*.safetensors

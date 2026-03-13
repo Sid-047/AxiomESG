@@ -5,12 +5,18 @@ from typing import Dict, List, Tuple
 
 
 def _normalize(text: str) -> str:
+    """
+    Lightweight normalization used by the deterministic AWFA weighting.
+    """
     text = text.lower()
     text = re.sub(r"[^a-z0-9\s]", "", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
 def _weight(sentence: str, category: str) -> float:
+    """
+    Heuristic sentence weighting based on length and simple ESG keywords.
+    """
     base = 0.4
     length_bonus = min(len(sentence) / 200.0, 0.6)
     keyword_bonus = 0.0
@@ -28,6 +34,16 @@ def _weight(sentence: str, category: str) -> float:
 
 
 def apply_awfa(category_sentences: Dict[str, List[str]]) -> List[Tuple[str, str, float]]:
+    """
+    Deterministic AWFA v0 used by the main FastAPI pipeline.
+
+    Args:
+        category_sentences: mapping
+            { "E": [...], "S": [...], "G": [...] }
+
+    Returns:
+        List of (category, sentence, weight) sorted by descending weight.
+    """
     seen = set()
     weighted: List[Tuple[str, str, float]] = []
     for category, sentences in category_sentences.items():

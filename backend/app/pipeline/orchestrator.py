@@ -3,15 +3,21 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.pipeline.awfa import apply_awfa
 from app.pipeline.esg_filter import filter_esg_sentences
 from app.pipeline.extractor import extract_documents
 from app.pipeline.llm import get_llm_client
 from app.pipeline.schema import ESGOutput
+
+# Import strategies — this also registers the heuristic strategy
+from app.pipeline.strategies import get_strategy  # noqa: F401
+
+# Import bert_integration to register BERT strategies on first use.
+# This is a lazy import triggered only when the module is loaded.
+import app.pipeline.bert_integration  # noqa: F401
 
 
 logger = get_logger("pipeline")
@@ -25,13 +31,15 @@ def _prompt(evidence: List[Dict[str, Any]]) -> str:
         "If no data for a section, set narrative to \"Not found in provided documents.\" and metrics to [].\n"
         "Do not fabricate metrics. Preserve units as-is; do not normalize units.\n"
         "Set confidence_score based on evidence density: few spans => low, many spans => higher.\n"
+        "For metrics, use exact keys: {\"name\": \"\", \"value\": \"\", \"unit\": \"\", \"year\": \"\", \"source_text\": \"\"}.\n"
+        "For top_evidence, use exact keys: {\"text\": \"\", \"weight\": 0.0, \"category\": \"E/S/G\", \"source_file\": \"\"}.\n"
         "Schema:\n"
         "{"
-        "\"metadata\":{\"source_files\":[],\"extraction_date\":\"ISO8601\",\"model_provider\":\"\",\"model_name\":\"\",\"awfa_weights_preserved\":true},"
+        "\"metadata\":{\"source_files\":[],\"extraction_date\":\"ISO8601\",\"model_provider\":\"\",\"model_name\":\"\",\"awfa_weights_preserved\":true,\"algorithm_used\":\"\"},"
         "\"aggregation\":{\"total_documents\":0,\"total_esg_sentences\":0,\"total_weighted_blocks\":0,\"ocr_used\":false},"
-        "\"environmental\":{\"narrative\":\"\",\"metrics\":[],\"confidence_score\":0.0,\"top_evidence\":[]},"
-        "\"social\":{\"narrative\":\"\",\"metrics\":[],\"confidence_score\":0.0,\"top_evidence\":[]},"
-        "\"governance\":{\"narrative\":\"\",\"metrics\":[],\"confidence_score\":0.0,\"top_evidence\":[]}"
+        "\"environmental\":{\"narrative\":\"\",\"metrics\":[{\"name\":\"\",\"value\":\"\",\"unit\":\"\",\"year\":\"\",\"source_text\":\"\"}],\"confidence_score\":0.0,\"top_evidence\":[{\"text\":\"\",\"weight\":0.0,\"category\":\"E\",\"source_file\":\"\"}]},"
+        "\"social\":{\"narrative\":\"\",\"metrics\":[{\"name\":\"\",\"value\":\"\",\"unit\":\"\",\"year\":\"\",\"source_text\":\"\"}],\"confidence_score\":0.0,\"top_evidence\":[{\"text\":\"\",\"weight\":0.0,\"category\":\"S\",\"source_file\":\"\"}]},"
+        "\"governance\":{\"narrative\":\"\",\"metrics\":[{\"name\":\"\",\"value\":\"\",\"unit\":\"\",\"year\":\"\",\"source_text\":\"\"}],\"confidence_score\":0.0,\"top_evidence\":[{\"text\":\"\",\"weight\":0.0,\"category\":\"G\",\"source_file\":\"\"}]}"
         "}\n"
         "Evidence spans (JSON array):\n"
         f"{json.dumps(evidence, ensure_ascii=False)}"
@@ -62,9 +70,10 @@ def run_pipeline(
     files: List[Tuple[str, bytes, str | None]],
     settings: Settings,
     job_id: str,
-    stage_callback=None,
+    stage_callback: Optional[Callable] = None,
+    algorithm: str = "heuristic",
 ) -> Tuple[ESGOutput, str, Dict[str, Any]]:
-    logger.info("pipeline_start", extra={"job_id": job_id, "file_count": len(files)})
+    logger.info("pipeline_start", extra={"job_id": job_id, "file_count": len(files), "algorithm": algorithm})
 
     if stage_callback:
         stage_callback("EXTRACT", 20)
@@ -88,7 +97,11 @@ def run_pipeline(
         stage_callback("WEIGHT", 55)
     t_filter = time.perf_counter() - t1
     t2 = time.perf_counter()
-    weighted = apply_awfa(esg_filtered)
+
+    # Dispatch to the selected weighting strategy
+    weight_fn = get_strategy(algorithm)
+    weighted = weight_fn(esg_filtered)
+
     t_weight = time.perf_counter() - t2
     evidence: List[Dict[str, Any]] = []
     for category, sentence, weight in weighted[:60]:
@@ -117,11 +130,19 @@ def run_pipeline(
 
     if stage_callback:
         stage_callback("VALIDATE", 90)
+
+    # Ensure metadata and aggregation keys exist
+    if "metadata" not in parsed:
+        parsed["metadata"] = {}
+    if "aggregation" not in parsed:
+        parsed["aggregation"] = {}
+
     parsed["metadata"]["source_files"] = list(extracted.keys())
     parsed["metadata"]["extraction_date"] = datetime.now(timezone.utc).isoformat()
     parsed["metadata"]["model_provider"] = settings.llm_provider
     parsed["metadata"]["model_name"] = result.model_name
     parsed["metadata"]["awfa_weights_preserved"] = True
+    parsed["metadata"]["algorithm_used"] = algorithm
     parsed["aggregation"]["total_documents"] = len(extracted)
     parsed["aggregation"]["total_esg_sentences"] = total_esg_sentences
     parsed["aggregation"]["total_weighted_blocks"] = len(weighted)
@@ -135,6 +156,7 @@ def run_pipeline(
         "pipeline_complete",
         extra={
             "job_id": job_id,
+            "algorithm": algorithm,
             "total_esg_sentences": total_esg_sentences,
             "weighted_blocks": len(weighted),
             "llm_usage": usage,
