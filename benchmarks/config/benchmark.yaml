@@ -1,0 +1,166 @@
+# AxiomESG Benchmark Configuration
+# -----------------------------------
+# Controls experiment matrix, dataset generation, and evaluation parameters.
+
+dataset:
+  synthetic_doc_count: 50
+  seed: 42
+  output_dir: benchmarks/dataset
+  doc_types:
+    - pdf_text
+    - pdf_scanned
+    - docx
+    - csv
+  # Fraction of docs per type (must sum to 1.0)
+  doc_type_weights:
+    pdf_text: 0.35
+    pdf_scanned: 0.20
+    docx: 0.30
+    csv: 0.15
+  real_docs_dir: benchmarks/dataset/real_docs
+
+variants:
+  # Each variant defines which pipeline stages are active.
+  # algorithm: which weighting strategy to dispatch to.
+  # filter_on: whether ESG keyword filter is applied.
+  # weight_on: whether weighting/AWFA is applied.
+  # ocr_mode: auto | force_on | force_off
+  # bert_mode: none | mean | static | awfa_v1 | awfa_v2
+  # awfa_mode: none | heuristic | real
+
+  V0_BASELINE:
+    label: "Baseline (no filter, no weight)"
+    filter_on: false
+    weight_on: false
+    ocr_mode: auto
+    awfa_mode: none
+    bert_mode: none
+    algorithm: passthrough
+
+  V1_FILTER_ONLY:
+    label: "Filter only (no weight)"
+    filter_on: true
+    weight_on: false
+    ocr_mode: auto
+    awfa_mode: none
+    bert_mode: none
+    algorithm: passthrough
+
+  V2_WEIGHT_ONLY:
+    label: "Weight only (no filter)"
+    filter_on: false
+    weight_on: true
+    ocr_mode: auto
+    awfa_mode: heuristic
+    bert_mode: none
+    algorithm: heuristic
+
+  V3_FILTER_HEURISTIC_AWFA:
+    label: "Filter + Heuristic AWFA"
+    filter_on: true
+    weight_on: true
+    ocr_mode: auto
+    awfa_mode: heuristic
+    bert_mode: none
+    algorithm: heuristic
+
+  V4_FILTER_REAL_AWFA:
+    label: "Filter + Real AWFA (TF-IDF + keyword density + Jaccard dedup)"
+    filter_on: true
+    weight_on: true
+    ocr_mode: auto
+    awfa_mode: real
+    bert_mode: none
+    algorithm: real_awfa
+
+  V5_HEURISTIC_OCR_ON:
+    label: "Filter + Heuristic AWFA + OCR forced ON"
+    filter_on: true
+    weight_on: true
+    ocr_mode: force_on
+    awfa_mode: heuristic
+    bert_mode: none
+    algorithm: heuristic
+
+  V6_HEURISTIC_OCR_OFF:
+    label: "Filter + Heuristic AWFA + OCR forced OFF (ablation)"
+    filter_on: true
+    weight_on: true
+    ocr_mode: force_off
+    awfa_mode: heuristic
+    bert_mode: none
+    algorithm: heuristic
+
+  V7_BERT_MEAN:
+    label: "Filter + BERT Mean Fusion"
+    filter_on: true
+    weight_on: true
+    ocr_mode: auto
+    awfa_mode: none
+    bert_mode: mean
+    algorithm: bert_mean
+    requires_bert: true
+
+  V8_BERT_STATIC:
+    label: "Filter + BERT Static Fusion"
+    filter_on: true
+    weight_on: true
+    ocr_mode: auto
+    awfa_mode: none
+    bert_mode: static
+    algorithm: bert_static
+    requires_bert: true
+
+  V9_BERT_AWFA_V1:
+    label: "Filter + BERT AWFA v1"
+    filter_on: true
+    weight_on: true
+    ocr_mode: auto
+    awfa_mode: none
+    bert_mode: awfa_v1
+    algorithm: bert_awfa_v1
+    requires_bert: true
+
+  V10_BERT_AWFA_V2:
+    label: "Filter + BERT AWFA v2"
+    filter_on: true
+    weight_on: true
+    ocr_mode: auto
+    awfa_mode: none
+    bert_mode: awfa_v2
+    algorithm: bert_awfa_v2
+    requires_bert: true
+
+execution:
+  min_scored_runs: 500
+  max_augmentation_rounds: 3
+  replicas_per_variant_doc: 1
+  # If BERT is unavailable, increase doc count to maintain 500+ runs
+  auto_scale_docs: true
+
+evaluation:
+  relaxed_match:
+    normalize_case: true
+    normalize_whitespace: true
+    normalize_numbers: true   # "245,000" == "245000"
+    unit_equivalents:
+      - ["tCO2e", "tonnes CO2e", "metric tons CO2e"]
+      - ["MWh", "megawatt hours"]
+      - ["%", "percent"]
+  evidence_k_values: [10, 30, 60]
+  jaccard_grounding_threshold: 0.9
+  bootstrap_n: 1000
+  bootstrap_ci: 0.95
+
+resolution:
+  # Thresholds that trigger augmentation
+  strict_f1_min: 0.55
+  grounded_metric_rate_min: 0.85
+  schema_valid_min: 0.95
+  augment_doc_count: 20
+
+output:
+  results_dir: benchmarks/results
+  artifacts_dir: benchmarks/artifacts
+  csv_file: axiomesg_benchmark_runs.csv
+  report_file: REPORT.md

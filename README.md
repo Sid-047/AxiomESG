@@ -181,4 +181,35 @@ Returns a structured Markdown representation of the completed ESG JSON.
 - **Idempotency**: The application strictly separates storage state from pipeline processing logic.
 
 ---
+
+## 🧪 Benchmarking & Ablation Harness
+
+AxiomESG includes a research-paper-ready benchmarking system for evaluating pipeline variants.
+
+### Quick Start
+
+```bash
+# 1. Generate synthetic ESG dataset (50 docs with ground truth)
+python -m benchmarks.src.generate_synthetic_dataset --out benchmarks/dataset --n 50 --seed 42
+
+# 2. Run full experiment matrix (500+ runs)
+python -m benchmarks.src.run_benchmarks --config benchmarks/config/benchmark.yaml
+
+# 3. Generate summary report
+python -m benchmarks.src.report --csv benchmarks/results/axiomesg_benchmark_runs.csv
+
+# 4. Run with auto-augmentation and report
+python -m benchmarks.src.run_benchmarks --config benchmarks/config/benchmark.yaml --augment --report
+
+# 5. Run tests
+python -m pytest benchmarks/tests/ -v
+```
+
+### Outputs
+- `benchmarks/results/axiomesg_benchmark_runs.csv` — Canonical results CSV
+- `benchmarks/results/REPORT.md` — Summary report with tables, CIs, and key findings
+
+See [`benchmarks/README.md`](benchmarks/README.md) for full documentation.
+
+---
 *Legacy Note: Previous engine files have been sequestered securely into `OldFiles_esg-ai-pipeline/` for historical archival and pattern analysis. The current `backend/` engine supersedes all legacy operations.*

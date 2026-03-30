@@ -22,3 +22,11 @@
 # Large model weights
 *.safetensors
 *.bin
+
+# Benchmark generated outputs (keep config/src/tests, ignore generated data)
+/benchmarks/dataset/synthetic_docs/
+/benchmarks/dataset/ground_truth/
+/benchmarks/dataset/real_docs/
+/benchmarks/dataset/manifest.json
+/benchmarks/artifacts/
+/benchmarks/results/
