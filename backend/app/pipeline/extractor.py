@@ -48,8 +48,68 @@ def _extract_pptx(data: bytes) -> str:
 
 
 def _extract_csv(data: bytes) -> str:
+    """Convert CSV rows into evidence sentences for downstream processing."""
     decoded = data.decode("utf-8", errors="ignore")
-    return decoded
+    reader = csv.reader(io.StringIO(decoded))
+    rows = list(reader)
+    if not rows:
+        return decoded
+
+    # Detect header row
+    header = [h.strip().lower() for h in rows[0]]
+    sentences = []
+
+    # Try structured extraction if we detect relevant columns
+    name_cols = [i for i, h in enumerate(header) if h in ("metric name", "metric", "indicator", "name", "kpi")]
+    value_cols = [i for i, h in enumerate(header) if h in ("value", "amount", "quantity", "figure")]
+    unit_cols = [i for i, h in enumerate(header) if h in ("unit", "units", "uom")]
+    year_cols = [i for i, h in enumerate(header) if h in ("year", "reporting year", "period", "fy")]
+    cat_cols = [i for i, h in enumerate(header) if h in ("category", "type", "pillar", "section")]
+    note_cols = [i for i, h in enumerate(header) if h in ("notes", "description", "remarks", "comment", "source")]
+
+    if name_cols and value_cols:
+        # Structured CSV with identifiable columns
+        ni, vi = name_cols[0], value_cols[0]
+        ui = unit_cols[0] if unit_cols else None
+        yi = year_cols[0] if year_cols else None
+        ci = cat_cols[0] if cat_cols else None
+        nti = note_cols[0] if note_cols else None
+
+        for row in rows[1:]:
+            if len(row) <= max(ni, vi):
+                continue
+            name = row[ni].strip()
+            value = row[vi].strip()
+            if not name or not value:
+                continue
+            unit = row[ui].strip() if ui is not None and len(row) > ui else ""
+            year = row[yi].strip() if yi is not None and len(row) > yi else ""
+            cat = row[ci].strip() if ci is not None and len(row) > ci else ""
+            note = row[nti].strip() if nti is not None and len(row) > nti else ""
+
+            parts = []
+            if cat:
+                parts.append(f"{cat}:")
+            parts.append(f"{name}:")
+            parts.append(f"{value}")
+            if unit:
+                parts.append(unit)
+            if year:
+                parts.append(f"({year})")
+            sentence = " ".join(parts) + "."
+            if note:
+                sentence += f" {note}"
+            sentences.append(sentence)
+    else:
+        # Unstructured CSV: concatenate rows as text
+        for row in rows[1:]:
+            line = ", ".join(cell.strip() for cell in row if cell.strip())
+            if line:
+                sentences.append(line + ".")
+
+    # Also include raw header for context
+    header_text = "Data columns: " + ", ".join(rows[0]) + "."
+    return header_text + "\n" + "\n".join(sentences)
 
 
 def _extract_xlsx(data: bytes) -> str:

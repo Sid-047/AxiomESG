@@ -27,3 +27,20 @@ frontend:
 
 clean:
 	docker compose down --rmi all --volumes --remove-orphans
+
+# ---- Benchmark targets ----
+
+benchmark-generate:
+	python3 -m benchmarks.src.generate_synthetic_dataset --out benchmarks/dataset --n 50 --seed 42
+
+benchmark-run:
+	python3 -m benchmarks.src.run_benchmarks --config benchmarks/config/benchmark.yaml --augment --report --mock-llm
+
+benchmark-report:
+	python3 -m benchmarks.src.report --csv benchmarks/results/axiomesg_benchmark_runs.csv --config benchmarks/config/benchmark.yaml
+
+benchmark-test:
+	python3 -m pytest backend/tests benchmarks/tests -v
+
+benchmark-all: benchmark-generate benchmark-run benchmark-report benchmark-test
+	@echo "✅ Full benchmark pipeline complete."

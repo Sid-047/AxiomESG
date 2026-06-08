@@ -50,9 +50,20 @@ class StaticFusion:
             )
 
         # Ensure ESG weights are on the same device / dtype as probabilities
-        static_weights = self.static_weights.to(
+        # Pad self.static_weights to match the number of classes in probabilities (e.g., V2 model has 4 classes)
+        num_classes = probabilities.size(-1)
+        base_weights = self.static_weights.to(
             device=probabilities.device, dtype=probabilities.dtype
         )
+        if num_classes > len(base_weights):
+            padding = torch.zeros(
+                num_classes - len(base_weights),
+                device=base_weights.device,
+                dtype=base_weights.dtype
+            )
+            static_weights = torch.cat([base_weights, padding])
+        else:
+            static_weights = base_weights[:num_classes]
 
         # sentence_weight = dot(probabilities, static_weights)
         # Shape: [num_sentences]

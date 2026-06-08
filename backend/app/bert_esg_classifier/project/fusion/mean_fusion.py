@@ -40,13 +40,19 @@ class MeanFusion:
                 torch.empty(0, dtype=embeddings.dtype),
             )
 
-        if probabilities.shape[-1] != 3:
-            raise ValueError(
-                f"Expected 3-way ESG probabilities, got {probabilities.shape[-1]} classes."
-            )
-
         # Empirical priors derived from dataset label distribution.
-        priors = torch.tensor([3058.0, 3110.0, 4211.0], device=probabilities.device, dtype=probabilities.dtype)
+        base_priors = torch.tensor([3058.0, 3110.0, 4211.0], device=probabilities.device, dtype=probabilities.dtype)
+        num_classes = probabilities.size(-1)
+        if num_classes > len(base_priors):
+            padding = torch.zeros(
+                num_classes - len(base_priors),
+                device=base_priors.device,
+                dtype=base_priors.dtype
+            )
+            priors = torch.cat([base_priors, padding])
+        else:
+            priors = base_priors[:num_classes]
+            
         priors = priors / priors.sum()
 
         # sentence_weight = dot(probabilities, empirical_priors)

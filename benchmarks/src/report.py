@@ -369,6 +369,19 @@ def generate_report(
     lines.append(f"- CSV: `{csv_path}`")
     lines.append("")
 
+    # ---- Generate Figures ----
+    from benchmarks.src.figures import generate_figures
+    figures_dir = os.path.join(results_dir, "figures")
+    saved_figs = generate_figures(csv_path, figures_dir)
+    
+    if saved_figs:
+        lines.append("## Visualizations")
+        lines.append("")
+        for fig_path in saved_figs:
+            rel_path = os.path.relpath(fig_path, results_dir)
+            lines.append(f"![{os.path.basename(fig_path)}]({rel_path})")
+            lines.append("")
+
     _write_report(report_path, lines)
     logger.info(f"Report written to: {report_path}")
     return report_path

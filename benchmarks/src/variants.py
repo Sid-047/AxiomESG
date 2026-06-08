@@ -49,28 +49,53 @@ class VariantConfig:
         return mapping.get(self.algorithm, self.algorithm)
 
 
+def _check_model_dir_complete(d: Path) -> bool:
+    """
+    A model directory is complete only if:
+    - config.json exists
+    - model.safetensors OR pytorch_model.bin exists
+    - tokenizer.json OR vocab.txt exists
+    """
+    if not d.exists():
+        return False
+    has_config = (d / "config.json").exists()
+    has_weights = (
+        (d / "model.safetensors").exists()
+        or (d / "pytorch_model.bin").exists()
+    )
+    has_tokenizer = (
+        (d / "tokenizer.json").exists()
+        or (d / "vocab.txt").exists()
+    )
+    return has_config and has_weights and has_tokenizer
+
+
 def check_bert_availability() -> bool:
     """
     Check if BERT ESG classifier weights are available on disk.
-    Returns True if model directory exists and contains weight files.
+    Returns True only if model directory has config + weights + tokenizer.
+    """
+    _, available = get_bert_model_info()
+    return available
+
+
+def get_bert_model_info() -> tuple:
+    """
+    Return (model_path_or_None, is_available).
+    Prefers v2 only if it is complete; falls back to v1.
     """
     backend_root = Path(__file__).resolve().parents[2] / "backend"
-    bert_dirs = [
-        backend_root / "app" / "bert_esg_classifier" / "content" / "bert_esg_classifier_v2",
-        backend_root / "app" / "bert_esg_classifier" / "content" / "bert_esg_classifier",
-    ]
+    bert_root = backend_root / "app" / "bert_esg_classifier" / "content"
+    v2_dir = bert_root / "bert_esg_classifier_v2"
+    v1_dir = bert_root / "bert_esg_classifier"
 
-    for d in bert_dirs:
-        if d.exists():
-            # Check for actual weight files
-            has_weights = any(
-                f.suffix in (".bin", ".safetensors", ".pt", ".pth")
-                for f in d.iterdir() if f.is_file()
-            )
-            has_config = (d / "config.json").exists()
-            if has_weights or has_config:
-                return True
-    return False
+    # Prefer v2 only if complete
+    if _check_model_dir_complete(v2_dir):
+        return (str(v2_dir), True)
+    if _check_model_dir_complete(v1_dir):
+        return (str(v1_dir), True)
+    # Neither is complete
+    return (None, False)
 
 
 def load_variants(config_path: str | None = None) -> List[VariantConfig]:

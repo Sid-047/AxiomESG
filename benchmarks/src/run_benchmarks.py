@@ -40,6 +40,25 @@ _backend_root = os.path.join(_repo_root, "backend")
 if _backend_root not in sys.path:
     sys.path.insert(0, _backend_root)
 
+# Load environment variables from .env files (never print secrets)
+try:
+    from dotenv import load_dotenv
+    # Load root .env first, then backend/.env (backend overrides)
+    _root_env = os.path.join(_repo_root, ".env")
+    _backend_env = os.path.join(_backend_root, ".env")
+    if os.path.exists(_root_env):
+        load_dotenv(_root_env, override=False)
+    if os.path.exists(_backend_env):
+        load_dotenv(_backend_env, override=True)
+except ImportError:
+    pass  # python-dotenv not installed; rely on OS environment
+
+# Register BERT strategies in the strategy registry BEFORE any get_strategy() calls
+try:
+    import app.pipeline.bert_integration  # noqa: F401 — registers bert_mean, bert_static, etc.
+except Exception:
+    pass  # BERT not available; strategies will be marked unavailable
+
 from benchmarks.src.eval import evaluate_single_run, validate_esg_schema
 from benchmarks.src.real_awfa import apply_real_awfa, get_dedup_stats
 from benchmarks.src.utils import (
@@ -54,6 +73,7 @@ from benchmarks.src.variants import (
     VariantConfig,
     compute_run_plan,
     get_all_variants,
+    get_bert_model_info,
 )
 
 logger = get_benchmark_logger("runner")
@@ -197,8 +217,10 @@ def _extract_metric_name(text: str) -> str:
 # Pipeline execution wrapper
 # ---------------------------------------------------------------------------
 
-def _check_llm_available() -> bool:
-    """Check if any LLM provider API keys are configured."""
+def _check_llm_available(force_mock: bool = False) -> bool:
+    """Check if any LLM provider API keys are configured, unless force_mock is True."""
+    if force_mock:
+        return False
     return bool(
         os.environ.get("AZURE_OPENAI_API_KEY")
         or os.environ.get("OPENROUTER_API_KEY")
@@ -434,6 +456,7 @@ def run_benchmarks(
     config_path: str = "benchmarks/config/benchmark.yaml",
     augmentation_round: int = 0,
     augmentation_tag: str = "",
+    force_mock: bool = False,
 ) -> str:
     """
     Execute the full benchmark matrix.
@@ -453,6 +476,20 @@ def run_benchmarks(
 
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(artifacts_dir, exist_ok=True)
+
+    # Back up existing CSV before overwriting
+    if augmentation_round == 0 and os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
+        import shutil
+        from datetime import datetime
+        backup_name = csv_filename.replace(".csv", f"_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+        backup_path = os.path.join(results_dir, backup_name)
+        shutil.copy2(csv_path, backup_path)
+        logger.info(f"Backed up old CSV to: {backup_path}")
+        # Start fresh CSV for new run
+        os.remove(csv_path)
+
+    # Write strategy availability report
+    _write_strategy_availability(config_path, results_dir)
 
     # Load variants
     all_variants = get_all_variants(config_path)
@@ -476,8 +513,8 @@ def run_benchmarks(
     # Compute run plan
     plan = compute_run_plan(len(docs), all_variants, min_runs)
 
-    # Determine LLM availability
-    use_real_llm = _check_llm_available()
+    # Check LLM availability
+    use_real_llm = _check_llm_available(force_mock)
     if use_real_llm:
         logger.info("LLM API keys detected. Using real LLM for intelligence stage.")
     else:
@@ -640,8 +677,14 @@ def run_benchmarks(
                     "doc_id": doc["doc_id"],
                     "doc_path": doc.get("file_path", ""),
                     "doc_type": doc["doc_type"],
+                    "is_synthetic": 1 if doc["doc_id"].startswith("synth") or doc["doc_id"].startswith("aug") else 0,
+                    "is_real": 0 if doc["doc_id"].startswith("synth") or doc["doc_id"].startswith("aug") else 1,
                     "is_scanned": is_scanned,
+                    "sector": doc.get("sector", ""),
+                    "ground_truth_available": 1 if gt_metrics else 0,
                     "augmentation_round": augmentation_round,
+                    "benchmark_mode": "mock-deterministic" if not use_real_llm else "real-llm",
+                    "mock_llm_used": 1 if not use_real_llm else 0,
                     # Timings
                     "extract_ms": timings.get("extract_ms", 0),
                     "filter_ms": timings.get("filter_ms", 0),
@@ -689,7 +732,8 @@ def run_benchmarks(
 def diagnose_and_augment(
     csv_path: str,
     config_path: str = "benchmarks/config/benchmark.yaml",
-    max_rounds: int = 3,
+    max_rounds: int = 2,
+    force_mock: bool = False,
 ) -> None:
     """
     Check if metrics are below thresholds and automatically generate
@@ -795,6 +839,7 @@ def diagnose_and_augment(
         config_path=config_path,
         augmentation_round=next_round,
         augmentation_tag=aug_tag,
+        force_mock=force_mock,
     )
 
     logger.info(f"Augmentation round {next_round} complete.")
@@ -815,11 +860,13 @@ def main():
                         help="Only run augmentation (skip main benchmark)")
     parser.add_argument("--report", action="store_true",
                         help="Generate report after benchmarking")
+    parser.add_argument("--mock-llm", action="store_true",
+                        help="Force use of mock LLM even if real LLM keys are configured")
 
     args = parser.parse_args()
 
     if not args.augment_only:
-        csv_path = run_benchmarks(config_path=args.config)
+        csv_path = run_benchmarks(config_path=args.config, force_mock=args.mock_llm)
     else:
         with open(args.config, "r") as f:
             config = yaml.safe_load(f)
@@ -830,13 +877,47 @@ def main():
 
     if args.augment or args.augment_only:
         try:
-            diagnose_and_augment(csv_path, args.config)
+            diagnose_and_augment(csv_path, args.config, force_mock=args.mock_llm)
         except Exception as e:
             logger.error(f"Augmentation failed: {e}")
 
     if args.report:
         from benchmarks.src.report import generate_report
         generate_report(csv_path, args.config)
+
+
+def _write_strategy_availability(config_path: str, results_dir: str) -> None:
+    """Write strategy_availability.json listing all variants and their status."""
+    all_variants = get_all_variants(config_path)
+    bert_path, bert_available = get_bert_model_info()
+
+    availability = []
+    for v in all_variants:
+        entry = {
+            "strategy_id": v.variant_id,
+            "algorithm": v.algorithm,
+            "label": v.label,
+            "registered": True,
+            "model_files_available": not v.requires_bert or bert_available,
+            "skipped": not v.available,
+            "skipped_reason": v.skip_reason or None,
+            "model_path": bert_path if v.requires_bert else None,
+            "error": None,
+        }
+        # Check actual registry for non-BERT strategies
+        if v.algorithm in ("bert_mean", "bert_static", "bert_awfa_v1", "bert_awfa_v2"):
+            try:
+                from app.pipeline.strategies import _registry
+                entry["registered"] = v.algorithm in _registry
+            except Exception:
+                entry["registered"] = False
+        availability.append(entry)
+
+    out_path = os.path.join(results_dir, "strategy_availability.json")
+    os.makedirs(results_dir, exist_ok=True)
+    with open(out_path, "w") as f:
+        json.dump(availability, f, indent=2)
+    logger.info(f"Strategy availability written to: {out_path}")
 
 
 if __name__ == "__main__":

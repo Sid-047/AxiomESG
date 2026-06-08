@@ -28,6 +28,18 @@ _bert_model = None
 _bert_loaded = False
 
 
+def _is_model_dir_complete(d) -> bool:
+    """Check that a model directory has config + weights + tokenizer."""
+    from pathlib import Path
+    d = Path(d)
+    if not d.exists():
+        return False
+    has_config = (d / "config.json").exists()
+    has_weights = (d / "model.safetensors").exists() or (d / "pytorch_model.bin").exists()
+    has_tokenizer = (d / "tokenizer.json").exists() or (d / "vocab.txt").exists()
+    return has_config and has_weights and has_tokenizer
+
+
 def _ensure_bert():
     """Load the BERT ESG classifier on first use."""
     global _bert_tokenizer, _bert_model, _bert_loaded
@@ -37,16 +49,20 @@ def _ensure_bert():
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
     backend_root = Path(__file__).resolve().parents[2]
-    bert_root = backend_root / "bert_esg_classifier" / "content"
+    bert_root = backend_root / "app" / "bert_esg_classifier" / "content"
     v2_dir = bert_root / "bert_esg_classifier_v2"
     v1_dir = bert_root / "bert_esg_classifier"
 
-    model_dir = v2_dir if v2_dir.exists() else v1_dir
-    if not model_dir.exists():
+    # Prefer v2 only if it is complete (config + weights + tokenizer)
+    if _is_model_dir_complete(v2_dir):
+        model_dir = v2_dir
+    elif _is_model_dir_complete(v1_dir):
+        model_dir = v1_dir
+    else:
         raise RuntimeError(
-            f"BERT ESG model not found at {model_dir}. "
-            "BERT-based strategies require the model weights under "
-            "backend/app/bert_esg_classifier/content/."
+            f"BERT ESG model not found or incomplete. "
+            f"Checked: {v2_dir}, {v1_dir}. "
+            "Each must contain config.json + model weights + tokenizer files."
         )
     _bert_tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
     _bert_model = AutoModelForSequenceClassification.from_pretrained(str(model_dir))
@@ -86,14 +102,23 @@ def _bert_process(sentences: List[str]) -> Tuple[Tensor, Tensor]:
 def _build_signals(embeddings: Tensor, probabilities: Tensor) -> List[Tensor]:
     """Build the three signals expected by fusion models."""
     if embeddings.numel() == 0:
-        empty = torch.empty(0, 768, dtype=torch.float32)
+        # Fallback for empty tensors, default to 768 or embeddings feature dim if possible
+        feat_dim = embeddings.shape[-1] if len(embeddings.shape) > 1 else 768
+        empty = torch.empty(0, feat_dim, dtype=torch.float32)
         return [empty, empty.clone(), empty.clone()]
 
     num_sentences, feature_dim = embeddings.shape
     embedding_tensor = embeddings
-    probability_tensor = probabilities.repeat(1, 256)  # [N, 768]
+    
+    # Expand probability tensor to match feature_dim dynamically
+    # probabilities is [N, num_classes] (typically 3)
+    num_classes = probabilities.shape[-1]
+    repeats = (feature_dim // num_classes) + 1
+    probability_tensor = probabilities.repeat(1, repeats)[:, :feature_dim]
+    
     confidence = probabilities.max(dim=-1).values  # [N]
-    confidence_tensor = confidence.unsqueeze(-1).repeat(1, feature_dim)  # [N, 768]
+    confidence_tensor = confidence.unsqueeze(-1).repeat(1, feature_dim)  # [N, feature_dim]
+    
     return [embedding_tensor, probability_tensor, confidence_tensor]
 
 

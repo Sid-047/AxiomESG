@@ -433,6 +433,120 @@ def compute_compression_stats(
 
 
 # ---------------------------------------------------------------------------
+# ERRS (Environmental Reporting Readiness Score)
+# ---------------------------------------------------------------------------
+
+# Environmental subcategory keyword mappings
+ENV_SUBCATEGORY_KEYWORDS = {
+    "emissions": ["emission", "ghg", "carbon", "co2", "scope 1", "scope 2", "scope 3", "greenhouse", "carbon intensity"],
+    "energy": ["energy", "renewable", "electricity", "mwh", "megawatt", "solar", "wind", "power consumption"],
+    "water": ["water", "withdrawal", "consumption", "discharge", "megalitre", "kilolitre", "freshwater"],
+    "waste": ["waste", "recycling", "landfill", "hazardous", "non-hazardous", "diversion", "recovery"],
+    "pollution": ["nox", "sox", "pm", "voc", "nitrogen oxide", "pollution", "particulate", "air emission"],
+    "biodiversity": ["biodiversity", "habitat", "species", "deforestation", "land use", "ecosystem"],
+    "circularity": ["circular", "recycled content", "material recovery", "reuse", "packaging"],
+    "compliance": ["compliance", "fine", "penalty", "violation", "non-compliance", "iso 14001", "environmental management", "audit"],
+}
+
+
+def _classify_env_subcategory(metric_name: str) -> str:
+    """Classify an environmental metric into a subcategory."""
+    name_lower = metric_name.lower()
+    for subcat, keywords in ENV_SUBCATEGORY_KEYWORDS.items():
+        if any(kw in name_lower for kw in keywords):
+            return subcat
+    return "other"
+
+
+def compute_errs(
+    predicted_metrics: List[Dict[str, Any]],
+    raw_text: str,
+    schema_valid: bool,
+    jaccard_threshold: float = 0.8,
+) -> Dict[str, float]:
+    """
+    Compute Environmental Reporting Readiness Score (ERRS).
+
+    ERRS = 0.20(value extracted)
+         + 0.15(unit extracted)
+         + 0.15(year extracted)
+         + 0.25(source evidence linked)
+         + 0.10(source file identified)
+         + 0.10(schema validity)
+         + 0.05(confidence score present)
+
+    Returns overall ERRS and per-subcategory ERRS.
+    """
+    # Filter to environmental metrics only
+    env_metrics = [m for m in predicted_metrics
+                   if m.get("category", "E") == "E"
+                   or _classify_env_subcategory(m.get("name", "")) != "other"]
+
+    if not env_metrics:
+        result = {"environmental_ERRS": 0.0}
+        for subcat in ENV_SUBCATEGORY_KEYWORDS:
+            result[f"{subcat}_ERRS"] = 0.0
+        return result
+
+    raw_lower = raw_text.lower()
+
+    def _score_metric(m: Dict[str, Any]) -> float:
+        score = 0.0
+        # Value extracted (0.20)
+        if m.get("value", "").strip():
+            score += 0.20
+        # Unit extracted (0.15)
+        if m.get("unit", "").strip():
+            score += 0.15
+        # Year extracted (0.15)
+        if m.get("year", "").strip():
+            score += 0.15
+        # Source evidence linked (0.25)
+        source = m.get("source_text", "").strip()
+        if source:
+            if source.lower() in raw_lower:
+                score += 0.25
+            else:
+                # Jaccard check
+                from benchmarks.src.utils import jaccard_similarity
+                raw_sents = re.split(r'[.!?\n]+', raw_text)
+                for rs in raw_sents:
+                    if jaccard_similarity(source, rs) >= jaccard_threshold:
+                        score += 0.25
+                        break
+                else:
+                    score += 0.10  # Partial credit for having source_text
+        # Source file identified (0.10)
+        if m.get("source_file", "").strip() or m.get("source_document", "").strip():
+            score += 0.10
+        # Schema validity (0.10)
+        if schema_valid:
+            score += 0.10
+        # Confidence score present (0.05)
+        if m.get("confidence_score") is not None or m.get("confidence") is not None:
+            score += 0.05
+        return min(score, 1.0)
+
+    # Overall ERRS
+    all_scores = [_score_metric(m) for m in env_metrics]
+    overall_errs = round(sum(all_scores) / len(all_scores), 4) if all_scores else 0.0
+
+    result = {"environmental_ERRS": overall_errs}
+
+    # Per-subcategory ERRS
+    subcat_scores: Dict[str, List[float]] = {k: [] for k in ENV_SUBCATEGORY_KEYWORDS}
+    for m in env_metrics:
+        subcat = _classify_env_subcategory(m.get("name", ""))
+        if subcat in subcat_scores:
+            subcat_scores[subcat].append(_score_metric(m))
+
+    for subcat, scores in subcat_scores.items():
+        result[f"{subcat}_ERRS"] = round(sum(scores) / len(scores), 4) if scores else 0.0
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Full evaluation pipeline
 # ---------------------------------------------------------------------------
 
@@ -477,6 +591,11 @@ def evaluate_single_run(
     for section in ("environmental", "social", "governance"):
         all_pred_metrics.extend(output_json.get(section, {}).get("metrics", []))
 
+    # Tag environmental metrics with category
+    env_pred_metrics = output_json.get("environmental", {}).get("metrics", [])
+    for m in env_pred_metrics:
+        m["category"] = "E"
+
     # 3. Year/unit rates
     yu_rates = compute_year_unit_rates(all_pred_metrics, gt_metrics, unit_equivalents)
     result.update(yu_rates)
@@ -501,6 +620,27 @@ def evaluate_single_run(
     comp_stats = compute_compression_stats(evidence_spans, raw_text, pre_dedup_count, post_dedup_count)
     result.update(comp_stats)
 
+    # 7. ERRS (Environmental Reporting Readiness Score)
+    schema_valid = result.get("schema_valid", 0) == 1
+    errs = compute_errs(all_pred_metrics, raw_text, schema_valid, jaccard_threshold=0.8)
+    result.update(errs)
+
+    # 8. Environmental-specific precision/recall/F1
+    env_gt = [m for m in gt_metrics if m.get("category") == "E"]
+    env_pred = output_json.get("environmental", {}).get("metrics", [])
+    if env_gt:
+        env_strict = compute_metric_scores(env_pred, env_gt, unit_equivalents, mode="strict")
+        env_relaxed = compute_metric_scores(env_pred, env_gt, unit_equivalents, mode="relaxed")
+        result["environmental_precision"] = env_relaxed["precision"]
+        result["environmental_recall"] = env_relaxed["recall"]
+        result["environmental_f1"] = env_relaxed["f1"]
+        result["environmental_miss_rate"] = round(1.0 - env_relaxed["recall"], 4)
+    else:
+        result["environmental_precision"] = 0.0
+        result["environmental_recall"] = 0.0
+        result["environmental_f1"] = 0.0
+        result["environmental_miss_rate"] = 1.0
+
     return result
 
 
@@ -524,3 +664,12 @@ def _set_zero_metrics(result: Dict[str, Any], k_values: List[int]) -> None:
     result["extracted_char_count"] = 0
     result["compression_ratio"] = 0.0
     result["dedup_rate"] = 0.0
+    # Environmental metrics
+    result["environmental_ERRS"] = 0.0
+    result["environmental_precision"] = 0.0
+    result["environmental_recall"] = 0.0
+    result["environmental_f1"] = 0.0
+    result["environmental_miss_rate"] = 1.0
+    for subcat in ENV_SUBCATEGORY_KEYWORDS:
+        result[f"{subcat}_ERRS"] = 0.0
+

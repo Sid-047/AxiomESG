@@ -240,8 +240,14 @@ CSV_COLUMNS = [
     "doc_id",
     "doc_path",
     "doc_type",
+    "is_synthetic",
+    "is_real",
     "is_scanned",
+    "sector",
+    "ground_truth_available",
     "augmentation_round",
+    "benchmark_mode",
+    "mock_llm_used",
     # Stage timings (ms)
     "extract_ms",
     "filter_ms",
@@ -285,6 +291,20 @@ CSV_COLUMNS = [
     "overall_relaxed_precision",
     "overall_relaxed_recall",
     "overall_relaxed_f1",
+    # Environmental-specific
+    "environmental_precision",
+    "environmental_recall",
+    "environmental_f1",
+    "environmental_miss_rate",
+    "environmental_ERRS",
+    "emissions_ERRS",
+    "energy_ERRS",
+    "water_ERRS",
+    "waste_ERRS",
+    "pollution_ERRS",
+    "biodiversity_ERRS",
+    "circularity_ERRS",
+    "compliance_ERRS",
     # Rates
     "missing_year_rate",
     "wrong_year_rate",
@@ -309,3 +329,4 @@ CSV_COLUMNS = [
     "variant_skipped_reason",
     "error_message",
 ]
+
