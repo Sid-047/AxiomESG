@@ -28,14 +28,18 @@ _bert_model = None
 _bert_loaded = False
 
 
-def _is_model_dir_complete(d) -> bool:
-    """Check that a model directory has config + weights + tokenizer."""
+def _is_model_dir_complete(d, require_tokenizer: bool = True) -> bool:
+    """Check that a model directory has config + weights."""
     from pathlib import Path
     d = Path(d)
     if not d.exists():
         return False
     has_config = (d / "config.json").exists()
     has_weights = (d / "model.safetensors").exists() or (d / "pytorch_model.bin").exists()
+    
+    if not require_tokenizer:
+        return has_config and has_weights
+        
     has_tokenizer = (d / "tokenizer.json").exists() or (d / "vocab.txt").exists()
     return has_config and has_weights and has_tokenizer
 
@@ -47,27 +51,38 @@ def _ensure_bert():
         return
     from pathlib import Path
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    import logging
+    logger = logging.getLogger("pipeline")
 
     backend_root = Path(__file__).resolve().parents[2]
     bert_root = backend_root / "app" / "bert_esg_classifier" / "content"
     v2_dir = bert_root / "bert_esg_classifier_v2"
     v1_dir = bert_root / "bert_esg_classifier"
 
-    # Prefer v2 only if it is complete (config + weights + tokenizer)
-    if _is_model_dir_complete(v2_dir):
-        model_dir = v2_dir
-    elif _is_model_dir_complete(v1_dir):
-        model_dir = v1_dir
-    else:
-        raise RuntimeError(
-            f"BERT ESG model not found or incomplete. "
-            f"Checked: {v2_dir}, {v1_dir}. "
-            "Each must contain config.json + model weights + tokenizer files."
-        )
-    _bert_tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
-    _bert_model = AutoModelForSequenceClassification.from_pretrained(str(model_dir))
-    _bert_model.eval()
-    _bert_loaded = True
+    try:
+        # Prefer v2. If it has no tokenizer, try to borrow from v1.
+        if _is_model_dir_complete(v2_dir, require_tokenizer=False):
+            model_dir = v2_dir
+            if (v2_dir / "tokenizer.json").exists() or (v2_dir / "vocab.txt").exists():
+                tokenizer_dir = v2_dir
+            elif _is_model_dir_complete(v1_dir, require_tokenizer=True):
+                tokenizer_dir = v1_dir
+                logger.info("BERT v2 has no tokenizer; inheriting tokenizer from BERT v1.")
+            else:
+                raise RuntimeError("BERT v2 has no tokenizer and BERT v1 tokenizer unavailable.")
+        elif _is_model_dir_complete(v1_dir, require_tokenizer=True):
+            model_dir = v1_dir
+            tokenizer_dir = v1_dir
+        else:
+            raise RuntimeError(f"BERT ESG model not found or incomplete. Checked {v2_dir} and {v1_dir}.")
+
+        _bert_tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_dir))
+        _bert_model = AutoModelForSequenceClassification.from_pretrained(str(model_dir))
+        _bert_model.eval()
+        _bert_loaded = True
+    except Exception as e:
+        logger.error(f"Failed to load BERT: {e}")
+        raise RuntimeError(f"BERT unavailable: {e}")
 
 
 @torch.no_grad()
@@ -138,13 +153,13 @@ def _normalize(text: str) -> str:
 def _flatten_sentences(
     category_sentences: Dict[str, List[str]],
 ) -> Tuple[List[str], List[str]]:
-    """Flatten category dict into ordered (sentences, categories) lists."""
-    sentences: List[str] = []
-    categories: List[str] = []
-    for category in ("E", "S", "G"):
-        for s in category_sentences.get(category, []):
-            sentences.append(s)
-            categories.append(category)
+    """Flatten categorized sentences into parallel lists."""
+    sentences = []
+    categories = []
+    for cat, sents in category_sentences.items():
+        for sent in sents:
+            sentences.append(sent)
+            categories.append(cat)
     return sentences, categories
 
 

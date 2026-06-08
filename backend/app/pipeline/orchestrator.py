@@ -85,13 +85,22 @@ def run_pipeline(
     if stage_callback:
         stage_callback("FILTER", 40)
     t1 = time.perf_counter()
-    esg_filtered: Dict[str, List[str]] = {"E": [], "S": [], "G": []}
+    esg_filtered: Dict[str, List[str]] = {"E": [], "S": [], "G": [], "UNKNOWN": []}
     total_esg_sentences = 0
+    candidate_count_before_algorithm = 0
+    
     for filename, text in extracted.items():
+        from app.pipeline.esg_filter import _split_sentences
+        raw_chunks = _split_sentences(text)
+        candidate_count_before_algorithm += len(raw_chunks)
+        
         filtered = filter_esg_sentences(text, settings)
-        for key in ("E", "S", "G"):
-            esg_filtered[key].extend(filtered[key])
-            total_esg_sentences += len(filtered[key])
+        for key in ("E", "S", "G", "UNKNOWN"):
+            esg_filtered[key].extend(filtered.get(key, []))
+            total_esg_sentences += len(filtered.get(key, []))
+            
+    total_unique_kept = len(set(s for cat_sents in esg_filtered.values() for s in cat_sents))
+    pre_algorithm_filter_removed_count = candidate_count_before_algorithm - total_unique_kept
 
     if stage_callback:
         stage_callback("WEIGHT", 55)
@@ -145,6 +154,8 @@ def run_pipeline(
     parsed["metadata"]["algorithm_used"] = algorithm
     parsed["aggregation"]["total_documents"] = len(extracted)
     parsed["aggregation"]["total_esg_sentences"] = total_esg_sentences
+    parsed["aggregation"]["candidate_count_before_algorithm"] = candidate_count_before_algorithm
+    parsed["aggregation"]["pre_algorithm_filter_removed_count"] = pre_algorithm_filter_removed_count
     parsed["aggregation"]["total_weighted_blocks"] = len(weighted)
     parsed["aggregation"]["ocr_used"] = ocr_used
 

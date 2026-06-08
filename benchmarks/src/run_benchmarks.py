@@ -298,18 +298,32 @@ def _run_single(
 
         # ------ FILTER ------
         t1 = time.perf_counter()
+        t1 = time.perf_counter()
+        from app.pipeline.esg_filter import filter_esg_sentences, _split_sentences
+        
+        esg_filtered: Dict[str, List[str]] = {"E": [], "S": [], "G": [], "UNKNOWN": []}
+        candidate_count_before_algorithm = 0
+        raw_candidate_count = 0
+        
         if variant.filter_on:
-            from app.pipeline.esg_filter import filter_esg_sentences
-            esg_filtered: Dict[str, List[str]] = {"E": [], "S": [], "G": []}
             for fname, text in extracted.items():
+                raw_chunks = _split_sentences(text)
+                raw_candidate_count += len(raw_chunks)
+                candidate_count_before_algorithm += len(raw_chunks)
                 filtered = filter_esg_sentences(text, settings)
-                for key in ("E", "S", "G"):
-                    esg_filtered[key].extend(filtered[key])
+                for key in ("E", "S", "G", "UNKNOWN"):
+                    esg_filtered[key].extend(filtered.get(key, []))
+            total_unique_kept = len(set(s for cat_sents in esg_filtered.values() for s in cat_sents))
+            pre_algorithm_filter_removed_count = candidate_count_before_algorithm - total_unique_kept
         else:
-            # No filtering: split all text into sentences and assign to categories
-            import re
-            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', raw_text) if s.strip()]
-            esg_filtered = {"E": sentences[:], "S": sentences[:], "G": sentences[:]}
+            # No filtering: pass all sentences cleanly
+            for fname, text in extracted.items():
+                raw_chunks = _split_sentences(text)
+                raw_candidate_count += len(raw_chunks)
+                candidate_count_before_algorithm += len(raw_chunks)
+                esg_filtered["UNKNOWN"].extend(raw_chunks)
+            pre_algorithm_filter_removed_count = 0
+            
         t_filter = time.perf_counter() - t1
 
         # ------ WEIGHT ------
@@ -404,6 +418,9 @@ def _run_single(
                 parsed["aggregation"] = {}
             parsed["aggregation"]["total_documents"] = len(extracted)
             parsed["aggregation"]["total_esg_sentences"] = sum(len(v) for v in esg_filtered.values())
+            parsed["aggregation"]["candidate_count_before_algorithm"] = candidate_count_before_algorithm
+            parsed["aggregation"]["pre_algorithm_filter_removed_count"] = pre_algorithm_filter_removed_count
+            parsed["aggregation"]["raw_candidate_count"] = raw_candidate_count
             parsed["aggregation"]["total_weighted_blocks"] = len(weighted)
             parsed["aggregation"]["ocr_used"] = ocr_used
 
@@ -453,25 +470,26 @@ def _write_csv_row(csv_path: str, row: Dict[str, Any], write_header: bool = Fals
 # ---------------------------------------------------------------------------
 
 def run_benchmarks(
-    config_path: str = "benchmarks/config/benchmark.yaml",
+    config_path: str,
     augmentation_round: int = 0,
     augmentation_tag: str = "",
     force_mock: bool = False,
+    benchmark_version: str = "no_filter_v2",
 ) -> str:
     """
-    Execute the full benchmark matrix.
-
-    Returns path to the CSV file.
+    Run the full matrix of experiments defined in the config.
+    Returns path to the output CSV.
     """
-    # Load config
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
-    dataset_dir = config.get("dataset", {}).get("output_dir", "benchmarks/dataset")
-    results_dir = config.get("output", {}).get("results_dir", "benchmarks/results")
-    artifacts_dir = config.get("output", {}).get("artifacts_dir", "benchmarks/artifacts")
-    csv_filename = config.get("output", {}).get("csv_file", "axiomesg_benchmark_runs.csv")
+    # We enforce writing to the no_filter_benchmark directory
+    results_dir = "benchmarks/results/no_filter_benchmark"
+    csv_filename = "axiomesg_no_filter_benchmark_runs.csv"
+    os.makedirs(results_dir, exist_ok=True)
     csv_path = os.path.join(results_dir, csv_filename)
+    artifacts_dir = config.get("output", {}).get("artifacts_dir", "benchmarks/artifacts")
+    dataset_dir = config.get("dataset", {}).get("output_dir", "benchmarks/dataset")
     min_runs = config.get("execution", {}).get("min_scored_runs", 500)
 
     os.makedirs(results_dir, exist_ok=True)
@@ -661,52 +679,72 @@ def run_benchmarks(
 
                 row = {
                     "run_id": run_id,
-                    "git_commit": git_commit,
                     "timestamp": utc_timestamp(),
+                    "git_commit_hash": git_commit,
                     "seed": seed,
-                    "variant_id": variant.variant_id,
-                    "variant_label": variant.label,
-                    "algorithm_used": variant.algorithm,
-                    "filter_on": variant.filter_on,
-                    "weight_on": variant.weight_on,
-                    "ocr_mode": variant.ocr_mode,
-                    "awfa_mode": variant.awfa_mode,
-                    "bert_mode": variant.bert_mode,
-                    "llm_provider": "mock" if not use_real_llm else os.environ.get("LLM_PROVIDER", "unknown"),
-                    "llm_model_name": "mock-deterministic" if not use_real_llm else "",
+                    "benchmark_version": benchmark_version,
+                    "benchmark_mode": "mock-deterministic" if not use_real_llm else "real-llm",
+                    "augmentation_round": augmentation_round,
                     "doc_id": doc["doc_id"],
                     "doc_path": doc.get("file_path", ""),
                     "doc_type": doc["doc_type"],
+                    "sector": doc.get("sector", ""),
+                    "year": "",  # Extracted in eval if needed
                     "is_synthetic": 1 if doc["doc_id"].startswith("synth") or doc["doc_id"].startswith("aug") else 0,
                     "is_real": 0 if doc["doc_id"].startswith("synth") or doc["doc_id"].startswith("aug") else 1,
                     "is_scanned": is_scanned,
-                    "sector": doc.get("sector", ""),
                     "ground_truth_available": 1 if gt_metrics else 0,
-                    "augmentation_round": augmentation_round,
-                    "benchmark_mode": "mock-deterministic" if not use_real_llm else "real-llm",
-                    "mock_llm_used": 1 if not use_real_llm else 0,
-                    # Timings
+                    "disable_pre_algorithm_filter": 1 if os.environ.get("DISABLE_PRE_ALGORITHM_FILTER", "false") == "true" else 0,
+                    "content_filter_removed": 1 if not variant.filter_on else 0,
+                    "filter_on": 1 if variant.filter_on else 0,
+                    "diagnostic_old_filter": 1 if getattr(variant, "diagnostic_old_filter", False) else 0,
+                    "raw_candidate_count": run_result.get("output_json", {}).get("aggregation", {}).get("raw_candidate_count", 0) if run_result.get("output_json") else 0,
+                    "candidate_count_before_algorithm": run_result.get("output_json", {}).get("aggregation", {}).get("candidate_count_before_algorithm", 0) if run_result.get("output_json") else 0,
+                    "candidate_count_after_pre_filter": run_result.get("output_json", {}).get("aggregation", {}).get("total_esg_sentences", 0) if run_result.get("output_json") else 0,
+                    "pre_algorithm_filter_removed_count": run_result.get("output_json", {}).get("aggregation", {}).get("pre_algorithm_filter_removed_count", 0) if run_result.get("output_json") else 0,
+                    "pre_algorithm_filter_removed_reason": "esg_keyword_mismatch" if variant.filter_on else "N/A",
+                    "variant_id": variant.variant_id,
+                    "variant_label": variant.label,
+                    "algorithm_used": variant.algorithm,
+                    "awfa_mode": variant.awfa_mode,
+                    "bert_mode": variant.bert_mode,
+                    "finbert_mode": "none",
+                    "fusion_mode": "none",
+                    "weight_on": 1 if variant.weight_on else 0,
+                    "ocr_mode": variant.ocr_mode,
+                    "ocr_called": 1 if run_result["ocr_called"] else 0,
+                    "ocr_mock": 0,
+                    "variant_skipped": 0,
+                    "variant_skipped_reason": "",
+                    "json_parse_success": 1 if run_result["json_parse_success"] else 0,
+                    "schema_valid": 0,  # Overridden by eval_result
+                    "output_json_path": artifact_path,
+                    "error_type": type(run_result.get("error", None)).__name__ if run_result.get("error") else "",
+                    "error_message": run_result.get("error", ""),
+                    "total_latency_ms": timings.get("total_latency_ms", 0),
                     "extract_ms": timings.get("extract_ms", 0),
-                    "filter_ms": timings.get("filter_ms", 0),
-                    "weight_ms": timings.get("weight_ms", 0),
                     "ocr_ms": timings.get("ocr_ms", 0),
+                    "classify_ms": timings.get("filter_ms", 0),
+                    "weight_ms": timings.get("weight_ms", 0),
                     "intelligence_ms": timings.get("intelligence_ms", 0),
                     "validate_ms": timings.get("validate_ms", 0),
-                    "total_latency_ms": timings.get("total_latency_ms", 0),
-                    # Output info
-                    "output_json_path": artifact_path,
-                    "raw_text_hash": text_hash(run_result["raw_text"]),
-                    "raw_text_preview": run_result["raw_text"][:200].replace("\n", " "),
-                    "extracted_char_count": eval_result.get("extracted_char_count", len(run_result["raw_text"])),
-                    "evidence_char_count": eval_result.get("evidence_char_count", 0),
-                    # LLM usage
-                    "llm_prompt_chars": prompt_chars,
-                    "llm_output_chars": output_chars,
-                    "cost_proxy": prompt_chars + output_chars,
-                    "ocr_called": 1 if run_result["ocr_called"] else 0,
-                    # Variant skip info
-                    "variant_skipped_reason": "",
-                    "error_message": run_result["error"] or "",
+                    "llm_provider": "mock" if not use_real_llm else os.environ.get("LLM_PROVIDER", "unknown"),
+                    "llm_model_name": "mock-deterministic" if not use_real_llm else "",
+                    "mock_llm_used": 1 if not use_real_llm else 0,
+                    "real_llm_used": 1 if use_real_llm else 0,
+                    "prompt_chars": prompt_chars,
+                    "output_chars": output_chars,
+                    "cost_proxy_chars": prompt_chars + output_chars,
+                    "top_failure_mode": "",
+                    "diagnosis": "",
+                    "resolution_action": "",
+                    "notes": "",
+                    "social_f1": 0.0,
+                    "governance_f1": 0.0,
+                    "evidence_alignment": 0.0,
+                    "unit_accuracy": 0.0,
+                    "year_accuracy": 0.0,
+                    "unit_year_accuracy": 0.0,
                 }
 
                 # Merge eval metrics
@@ -862,17 +900,32 @@ def main():
                         help="Generate report after benchmarking")
     parser.add_argument("--mock-llm", action="store_true",
                         help="Force use of mock LLM even if real LLM keys are configured")
+    parser.add_argument("--benchmark-version", default="no_filter_v2",
+                        help="Benchmark version tag")
+    parser.add_argument("--disable-pre-algorithm-filter", action="store_true",
+                        help="Disable the content/ESG pre-filter")
+    parser.add_argument("--min-runs", type=int, default=500,
+                        help="Minimum runs target")
+    parser.add_argument("--real-llm-subset", action="store_true",
+                        help="Use real LLM for a subset of runs")
 
     args = parser.parse_args()
+    
+    # We will pass disable_pre_algorithm_filter via Settings to orchestrator
+    os.environ["DISABLE_PRE_ALGORITHM_FILTER"] = "true" if args.disable_pre_algorithm_filter else "false"
 
     if not args.augment_only:
-        csv_path = run_benchmarks(config_path=args.config, force_mock=args.mock_llm)
+        csv_path = run_benchmarks(
+            config_path=args.config, 
+            force_mock=args.mock_llm, 
+            benchmark_version=args.benchmark_version
+        )
     else:
         with open(args.config, "r") as f:
             config = yaml.safe_load(f)
         csv_path = os.path.join(
-            config.get("output", {}).get("results_dir", "benchmarks/results"),
-            config.get("output", {}).get("csv_file", "axiomesg_benchmark_runs.csv"),
+            config.get("output", {}).get("results_dir", "benchmarks/results/no_filter_benchmark"),
+            config.get("output", {}).get("csv_file", "axiomesg_no_filter_benchmark_runs.csv"),
         )
 
     if args.augment or args.augment_only:

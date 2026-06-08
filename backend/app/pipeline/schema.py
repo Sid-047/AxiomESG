@@ -44,6 +44,9 @@ class ESGOutputMetadata(BaseModel):
 class ESGAggregation(BaseModel):
     total_documents: int
     total_esg_sentences: int
+    candidate_count_before_algorithm: Optional[int] = None
+    pre_algorithm_filter_removed_count: Optional[int] = None
+    raw_candidate_count: Optional[int] = None
     total_weighted_blocks: int
     ocr_used: bool
 

@@ -42,6 +42,8 @@ class Settings(BaseSettings):
 
     default_algorithm: str = Field(default="heuristic", alias="DEFAULT_ALGORITHM")
 
+    disable_pre_algorithm_filter: bool = Field(default=False, alias="DISABLE_PRE_ALGORITHM_FILTER")
+
     class Config:
         env_file = ".env"
         case_sensitive = False

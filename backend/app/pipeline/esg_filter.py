@@ -57,28 +57,42 @@ def _load_keywords(settings: Settings) -> Dict[str, List[str]]:
 
 
 def _split_sentences(text: str) -> List[str]:
-    text = re.sub(r"\s+", " ", text.strip())
-    if not text:
-        return []
-    parts = re.split(r"(?<=[.!?])\s+", text)
-    return [p.strip() for p in parts if p.strip()]
+    chunks = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Split by sentence boundaries if long, else keep as is
+        parts = re.split(r"(?<=[.!?])\s+", line)
+        for p in parts:
+            p = p.strip()
+            if p:
+                chunks.append(p)
+    return chunks
 
 
 def filter_esg_sentences(text: str, settings: Settings) -> Dict[str, List[str]]:
     keywords = _load_keywords(settings)
     sentences = _split_sentences(text)
-    result: Dict[str, List[str]] = {"E": [], "S": [], "G": []}
+    result: Dict[str, List[str]] = {"E": [], "S": [], "G": [], "UNKNOWN": []}
+    
     for sentence in sentences:
         lowered = sentence.lower()
+        matched = False
         for category in ("E", "S", "G"):
             if any(k in lowered for k in keywords[category]):
                 result[category].append(sentence)
+                matched = True
+        
+        if not matched and getattr(settings, "disable_pre_algorithm_filter", False):
+            result["UNKNOWN"].append(sentence)
+            
     return result
 
 
 def flatten_esg(result: Dict[str, List[str]]) -> List[Tuple[str, str]]:
     flat: List[Tuple[str, str]] = []
-    for category in ("E", "S", "G"):
+    for category in ("E", "S", "G", "UNKNOWN"):
         for sentence in result.get(category, []):
             flat.append((category, sentence))
     return flat

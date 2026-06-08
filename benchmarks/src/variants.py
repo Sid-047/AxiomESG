@@ -31,6 +31,7 @@ class VariantConfig:
     bert_mode: str          # none, mean, static, awfa_v1, awfa_v2
     algorithm: str          # heuristic, real_awfa, bert_mean, bert_static, etc.
     requires_bert: bool = False
+    diagnostic_old_filter: bool = False
     available: bool = True
     skip_reason: str = ""
 

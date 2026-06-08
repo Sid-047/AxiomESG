@@ -599,6 +599,9 @@ def evaluate_single_run(
     # 3. Year/unit rates
     yu_rates = compute_year_unit_rates(all_pred_metrics, gt_metrics, unit_equivalents)
     result.update(yu_rates)
+    result["unit_accuracy"] = round(1.0 - result.get("unit_missing_rate", 1.0), 4)
+    result["year_accuracy"] = round(1.0 - (result.get("missing_year_rate", 1.0) + result.get("wrong_year_rate", 0.0)), 4)
+    result["unit_year_accuracy"] = round((result["unit_accuracy"] + result["year_accuracy"]) / 2, 4)
 
     # 4. Groundedness
     grounded = compute_groundedness(all_pred_metrics, raw_text, jaccard_threshold)
@@ -641,6 +644,10 @@ def evaluate_single_run(
         result["environmental_f1"] = 0.0
         result["environmental_miss_rate"] = 1.0
 
+    result["social_f1"] = result.get("soc_relaxed_f1", 0.0)
+    result["governance_f1"] = result.get("gov_relaxed_f1", 0.0)
+    result["evidence_alignment"] = result.get("evidence_hit_rate", 0.0)  # alias for alignment
+
     return result
 
 
@@ -672,4 +679,11 @@ def _set_zero_metrics(result: Dict[str, Any], k_values: List[int]) -> None:
     result["environmental_miss_rate"] = 1.0
     for subcat in ENV_SUBCATEGORY_KEYWORDS:
         result[f"{subcat}_ERRS"] = 0.0
+
+    result["social_f1"] = 0.0
+    result["governance_f1"] = 0.0
+    result["evidence_alignment"] = 0.0
+    result["unit_accuracy"] = 0.0
+    result["year_accuracy"] = 0.0
+    result["unit_year_accuracy"] = 0.0
 

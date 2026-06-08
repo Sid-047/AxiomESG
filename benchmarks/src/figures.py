@@ -60,6 +60,8 @@ def generate_figures(csv_path: str, output_dir: str) -> List[str]:
     colors = plt.cm.Set2(np.linspace(0, 1, len(variant_order)))
     color_map = dict(zip(variant_order, colors))
 
+    prefix = "no_filter_" if "no_filter" in output_dir else ""
+
     # 1. F1 by variant
     fig, ax = plt.subplots(figsize=(14, 6))
     means = scored.groupby("variant_id")["overall_relaxed_f1"].mean()
@@ -73,7 +75,7 @@ def generate_figures(csv_path: str, output_dir: str) -> List[str]:
     for i, v in enumerate(means.values):
         ax.text(i, v + 0.02, f"{v:.3f}", ha="center", va="bottom", fontsize=8)
     plt.tight_layout()
-    path = os.path.join(output_dir, "f1_by_variant.png")
+    path = os.path.join(output_dir, f"{prefix}f1_by_variant.png")
     fig.savefig(path)
     plt.close(fig)
     saved.append(path)
@@ -91,7 +93,7 @@ def generate_figures(csv_path: str, output_dir: str) -> List[str]:
         for i, v in enumerate(means.values):
             ax.text(i, v + 0.02, f"{v:.3f}", ha="center", va="bottom", fontsize=8)
         plt.tight_layout()
-        path = os.path.join(output_dir, "environmental_f1_by_variant.png")
+        path = os.path.join(output_dir, f"{prefix}environmental_f1_by_variant.png")
         fig.savefig(path)
         plt.close(fig)
         saved.append(path)
@@ -107,7 +109,7 @@ def generate_figures(csv_path: str, output_dir: str) -> List[str]:
     ax.set_title("Miss Rate by Variant")
     ax.set_ylim(0, 1)
     plt.tight_layout()
-    path = os.path.join(output_dir, "miss_rate_by_variant.png")
+    path = os.path.join(output_dir, f"{prefix}miss_rate_by_variant.png")
     fig.savefig(path)
     plt.close(fig)
     saved.append(path)
@@ -122,7 +124,7 @@ def generate_figures(csv_path: str, output_dir: str) -> List[str]:
     ax.set_title("Evidence Alignment by Variant")
     ax.set_ylim(0, 1)
     plt.tight_layout()
-    path = os.path.join(output_dir, "evidence_alignment_by_variant.png")
+    path = os.path.join(output_dir, f"{prefix}evidence_alignment_by_variant.png")
     fig.savefig(path)
     plt.close(fig)
     saved.append(path)
@@ -140,7 +142,7 @@ def generate_figures(csv_path: str, output_dir: str) -> List[str]:
         for i, v in enumerate(means.values):
             ax.text(i, v + 0.02, f"{v:.3f}", ha="center", va="bottom", fontsize=8)
         plt.tight_layout()
-        path = os.path.join(output_dir, "environmental_ERRS_by_variant.png")
+        path = os.path.join(output_dir, f"{prefix}environmental_ERRS_by_variant.png")
         fig.savefig(path)
         plt.close(fig)
         saved.append(path)
@@ -156,7 +158,7 @@ def generate_figures(csv_path: str, output_dir: str) -> List[str]:
     for i, v in enumerate(means.values):
         ax.text(i, v + max(means.values) * 0.02, f"{v:.0f}", ha="center", va="bottom", fontsize=8)
     plt.tight_layout()
-    path = os.path.join(output_dir, "latency_by_variant.png")
+    path = os.path.join(output_dir, f"{prefix}latency_by_variant.png")
     fig.savefig(path)
     plt.close(fig)
     saved.append(path)
@@ -182,7 +184,7 @@ def generate_figures(csv_path: str, output_dir: str) -> List[str]:
             for j in range(len(doc_types)):
                 ax.text(j, i, f"{heatmap_data[i, j]:.2f}", ha="center", va="center", fontsize=7)
         plt.tight_layout()
-        path = os.path.join(output_dir, "doc_type_f1_heatmap.png")
+        path = os.path.join(output_dir, f"{prefix}doc_type_f1_heatmap.png")
         fig.savefig(path)
         plt.close(fig)
         saved.append(path)
@@ -203,7 +205,7 @@ def generate_figures(csv_path: str, output_dir: str) -> List[str]:
         ax.set_title("OCR Ablation on Scanned Documents")
         ax.legend()
         plt.tight_layout()
-        path = os.path.join(output_dir, "ocr_ablation_scanned_docs.png")
+        path = os.path.join(output_dir, f"{prefix}ocr_ablation_scanned_docs.png")
         fig.savefig(path)
         plt.close(fig)
         saved.append(path)
@@ -232,7 +234,7 @@ def generate_figures(csv_path: str, output_dir: str) -> List[str]:
         for i, v in enumerate(deltas):
             ax.text(i, v + 0.005 if v >= 0 else v - 0.015, f"{v:+.3f}", ha="center", fontsize=7)
         plt.tight_layout()
-        path = os.path.join(output_dir, "awfa_delta_vs_baseline.png")
+        path = os.path.join(output_dir, f"{prefix}awfa_delta_vs_baseline.png")
         fig.savefig(path)
         plt.close(fig)
         saved.append(path)

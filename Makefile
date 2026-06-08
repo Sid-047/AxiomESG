@@ -44,3 +44,17 @@ benchmark-test:
 
 benchmark-all: benchmark-generate benchmark-run benchmark-report benchmark-test
 	@echo "✅ Full benchmark pipeline complete."
+
+# ---- No-Filter Benchmark targets ----
+
+benchmark-no-filter-generate:
+	python3 -m benchmarks.src.generate_synthetic_dataset --out benchmarks/dataset --n 50 --seed 42
+
+benchmark-no-filter-run:
+	python3 -m benchmarks.src.run_benchmarks --config benchmarks/config/benchmark.yaml --benchmark-version no_filter_v2 --disable-pre-algorithm-filter --mock-llm --report
+
+benchmark-no-filter-report:
+	python3 -m benchmarks.src.report --csv benchmarks/results/no_filter_benchmark/axiomesg_no_filter_benchmark_runs.csv --config benchmarks/config/benchmark.yaml
+
+benchmark-no-filter-all: benchmark-no-filter-generate benchmark-no-filter-run
+	@echo "✅ Full No-Filter benchmark pipeline complete."
